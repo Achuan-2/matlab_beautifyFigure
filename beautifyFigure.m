@@ -6,7 +6,7 @@ function beautifyFigure(hFig,opts)
     %   beautifyFigure(fig)                                 % 美化指定句柄的图形（位置参数）。
     %   beautifyFigure(hFig=fig)                           % 美化指定句柄的图形（命名参数）。
     %   beautifyFigure(fig, filename="foo")                % 美化并保存图形。
-    %   beautifyFigure(fig, figSize=[7, 5])                % 指定尺寸。
+    %   beautifyFigure(fig, figSize=[7, 5])                % 指定尺寸。[宽, 高]
     %   beautifyFigure(fig, figSize=[0, 0])                % 不修改尺寸。
     %   beautifyFigure(sizeObject="figure", figSize=[10, 8]) % 设置整个图形尺寸。
     %   beautifyFigure(sizeObject="axes", figSize=[7, 5])    % 设置坐标轴尺寸。
@@ -32,6 +32,7 @@ function beautifyFigure(hFig,opts)
         opts.exportFormats string = ["pdf", "fig", "png"]; % 默认导出格式
         opts.fontSize (1,1) double {mustBePositive} = 6; % 统一字体大小（pt）
         opts.lineWidth (1,1) double {mustBePositive} = 1; % 统一线宽（pt）
+        opts.firstTickRatio (1,1) double {mustBeFinite, mustBeGreaterThanOrEqual(opts.firstTickRatio,0), mustBeLessThan(opts.firstTickRatio,0.5)} = 0.1; % y轴第一个刻度距离底部的比例，0 表示不处理
     end
     
     % 确定使用的图形句柄：优先使用位置参数 hFig，其次使用命名参数 opts.hFig，最后使用 gcf
@@ -106,7 +107,7 @@ function beautifyFigure(hFig,opts)
         lines = findall(ax, 'Type', 'Line');
         
         for j = 1:length(lines)
-            set(lines(j), 'LineWidth', opts.lineWidth, 'MarkerSize', 6);
+            set(lines(j), 'LineWidth', opts.lineWidth, 'MarkerSize', 1);
         end
         
         % 设置散点图属性
@@ -140,13 +141,22 @@ function beautifyFigure(hFig,opts)
         % 关闭坐标轴边框（设置为 box off）
         set(ax, 'Box', 'off');
 
-        % 确保X轴刻度至少有三个点（左、中、右）
-        xticks_current = get(ax, 'XTick');
-        if length(xticks_current) < 3
+        % 确保Y轴刻度至少有三个点（左、中、右）
+        yticks_current = get(ax, 'YTick');
+        if 0 < length(yticks_current) && length(yticks_current) < 3
             % 如果当前刻度少于3个，设置为左、中、右三个点
-            middle = mean(xticks_current);
-            xticks_new = [xticks_current(1), middle, xticks_current(2)];
-            set(ax, 'XTick', xticks_new);
+            middle = mean(yticks_current);
+            yticks_new = [yticks_current(1), middle, yticks_current(2)];
+            set(ax, 'YTick', yticks_new);
+        end
+
+        % 如果用户要求，统一 y 轴第一个刻度到 x 轴的视觉距离（ratio=0 则跳过）
+        if isfield(opts, 'firstTickRatio') && opts.firstTickRatio > 0
+            try
+                unifyFirstTickDistance(ax, opts.firstTickRatio);
+            catch
+                % 若因不支持的坐标轴类型或其他原因失败，忽略并继续
+            end
         end
     end
     
@@ -217,3 +227,58 @@ function beautifyFigure(hFig,opts)
     end
     
 end
+
+
+function unifyFirstTickDistance(ax, ratio)
+    % unifyFirstTickDistance 统一y轴第一个刻度距离x轴的视觉距离
+    %
+    % 输入：
+    %   ax    - 坐标区对象（可选，默认为 gca）
+    %   ratio - 第一个刻度距离底部的比例（可选，默认为 0.1，即10%）
+    %
+    % 示例：
+    %   plot(x, y);
+    %   unifyFirstTickDistance(gca, 0.15); % 第一个刻度在15%高度处
+    
+    arguments
+        ax matlab.graphics.axis.Axes = gca
+        ratio (1,1) double {mustBeFinite, mustBeGreaterThanOrEqual(ratio,0), mustBeLessThan(ratio,0.5)} = 0.1
+    end
+    
+    % 获取当前的 y 轴刻度
+    currentTicks = ax.YTick;
+    
+    % 如果没有刻度，直接返回
+    if isempty(currentTicks)
+        return;
+    end
+    
+    % 获取第一个和最后一个刻度值
+    firstTick = currentTicks(1);
+    lastTick = currentTicks(end);
+    
+    % 计算刻度范围
+    tickRange = lastTick - firstTick;
+    
+    % 处理边界情况：当 tickRange 为 0（所有刻度相同）时，使用一个小的填充
+    if tickRange == 0
+        pad = abs(firstTick) * 0.05; % 5% 的相对填充
+        if pad == 0
+            pad = 0.1; % 对于全零刻度，使用绝对填充
+        end
+        newYMin = firstTick - pad;
+        newYMax = firstTick + pad;
+    else
+        % 根据 ratio 计算新的 y 轴下限与上限
+        % 若第一个刻度在比例位置 ratio：
+        % (firstTick - newYMin) / (newYMax - newYMin) = ratio
+        % 假设在上方也留出相同比例的空间
+        % 当 ratio < 0.5 时，下面的分母为正
+        newYMin = firstTick - tickRange * ratio / (1 - 2*ratio);
+        newYMax = lastTick + tickRange * ratio / (1 - 2*ratio);
+    end
+    
+    % 设置新的 y 轴范围
+    ax.YLim = [newYMin, newYMax];
+end
+
