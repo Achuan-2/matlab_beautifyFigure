@@ -372,7 +372,6 @@ function unifyFirstTickDistance(ax, ratio)
     ax.YLim = [newYMin, newYMax];
 end
 
-
 function createTruncatedAxes(ax, interval, hFig, tickSpacing)
     % createTruncatedAxes 将一个坐标区拆分为上下两个坐标区以实现Y轴截断
     % interval = [a, b] 表示移除 (a,b) 区间，显示 [ymin,a] 与 [b,ymax]
@@ -387,6 +386,16 @@ function createTruncatedAxes(ax, interval, hFig, tickSpacing)
     if a >= b
         return;
     end
+    
+    % 保存原始坐标轴的重要属性
+    origXTick = ax.XTick;
+    origXTickLabel = ax.XTickLabel;
+    origXLabel = ax.XLabel.String;
+    origYLabel = ax.YLabel.String;
+    origTitle = ax.Title.String;
+    origFontName = ax.FontName;
+    origFontSize = ax.FontSize;
+    origLineWidth = ax.LineWidth;
     
     % 使用归一化位置便于计算（不改变原坐标区的Units）
     origUnits = ax.Units;
@@ -432,8 +441,8 @@ function createTruncatedAxes(ax, interval, hFig, tickSpacing)
     
     % 复制原坐标区的属性（标签、标题、颜色等简单属性）
     try
-        set(topAx, 'FontName', ax.FontName, 'FontSize', ax.FontSize, 'LineWidth', ax.LineWidth, 'Box', 'off');
-        set(bottomAx, 'FontName', ax.FontName, 'FontSize', ax.FontSize, 'LineWidth', ax.LineWidth, 'Box', 'off');
+        set(topAx, 'FontName', origFontName, 'FontSize', origFontSize, 'LineWidth', origLineWidth, 'Box', 'off');
+        set(bottomAx, 'FontName', origFontName, 'FontSize', origFontSize, 'LineWidth', origLineWidth, 'Box', 'off');
     catch
     end
     
@@ -451,13 +460,20 @@ function createTruncatedAxes(ax, interval, hFig, tickSpacing)
     topAx.YLim = [b, ymax];
     bottomAx.YLim = [ymin, a];
     
-    % X 轴保持一致，隐藏上坐标区的 X 标签与刻度标签；同时隐藏上轴的 X 轴线与刻度
+    % X 轴保持一致（包括刻度和标签）
     xlimVal = ax.XLim;
     topAx.XLim = xlimVal;
     bottomAx.XLim = xlimVal;
+    
+    % 恢复 X 轴刻度和标签
+    set(topAx, 'XTick', origXTick);
+    set(bottomAx, 'XTick', origXTick);
+    set(bottomAx, 'XTickLabel', origXTickLabel);
+    
+    % 隐藏上坐标区的 X 标签与刻度标签；同时隐藏上轴的 X 轴线与刻度
     set(topAx, 'XTickLabel', []);
     try
-        set(topAx, 'XColor', 'none', 'XTick', []);
+        set(topAx, 'XColor', 'none');
     catch
         % 某些 MATLAB 版本或对象可能不支持直接设置，忽略即可
     end
@@ -498,14 +514,45 @@ function createTruncatedAxes(ax, interval, hFig, tickSpacing)
     set(bottomAx, 'YTick', bottomTicks);
     set(topAx, 'YTick', topTicks);
     
-    % 中间不绘制任何断裂线，保留空白以提示截断
-    
-    % 复制坐标轴标签与标题到下轴（保留位置），上轴不显示 X 标签
+    % 设置坐标轴标签与标题
     try
-        xlabel(bottomAx, ax.XLabel.String, 'FontSize', ax.XLabel.FontSize, 'FontName', ax.XLabel.FontName);
-        ylabel(bottomAx, ax.YLabel.String, 'FontSize', ax.YLabel.FontSize, 'FontName', ax.YLabel.FontName);
-        title(topAx, ax.Title.String, 'FontSize', ax.Title.FontSize, 'FontName', ax.Title.FontName);
-    catch
+        xlabel(bottomAx, origXLabel, 'FontSize', origFontSize, 'FontName', origFontName);
+        title(topAx, origTitle, 'FontSize', origFontSize, 'FontName', origFontName);
+        
+        % Y轴标签：使用 text 对象手动放置，避免与 YTickLabel 重叠
+        if ~isempty(origYLabel)
+            % 将单位切换为归一化坐标以便计算
+            bottomAx.Units = 'normalized';
+            topAx.Units = 'normalized';
+            
+            % 计算整体中间的 Y 位置（数据坐标）
+            totalHeight = topPos(2) + topPos(4) - bottomPos(2);
+            middleY_fig = bottomPos(2) + totalHeight / 2;
+            bottomMiddleY_fig = bottomPos(2) + bottomPos(4) / 2;
+            offsetY_fig = middleY_fig - bottomMiddleY_fig;
+            offsetY_data = offsetY_fig / bottomPos(4) * (a - ymin);
+            yMiddle_data = (ymin + a) / 2 + offsetY_data;
+            
+            % 获取 X 轴范围
+            xLim = bottomAx.XLim;
+            xRange = xLim(2) - xLim(1);
+            
+            % 在左侧创建 text 对象（使用数据坐标）
+            % X 位置设置为轴外左侧
+            xPos = xLim(1) - xRange * 0.18; % 在左侧，距离轴线18%的X范围
+            
+            % 创建 text 对象
+            yl = text(bottomAx, xPos, yMiddle_data, origYLabel, ...
+                'FontSize', origFontSize, ...
+                'FontName', origFontName, ...
+                'FontWeight', 'normal', ...
+                'Rotation', 90, ...
+                'HorizontalAlignment', 'center', ...
+                'VerticalAlignment', 'bottom', ...
+                'Clipping', 'off');
+        end
+    catch ME
+        warning('Failed to set labels: %s', ME.message);
     end
     
     % 删除原坐标区
@@ -513,7 +560,5 @@ function createTruncatedAxes(ax, interval, hFig, tickSpacing)
         delete(ax);
     catch
     end
-    
-    % 恢复原单位（新坐标区使用归一化单位）
-    
 end
+
